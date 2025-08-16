@@ -359,14 +359,6 @@ export default function WriterPage() {
     setIsPlagiarismCheckOpen(!isPlagiarismCheckOpen)
   }
 
-  const handleToggleVisualContent = () => {
-    // Toggle visual content section
-    toast({
-      title: "Visual Content",
-      description: "Visual content section toggled!",
-    })
-  }
-
   // Formatting handlers
   const handleFormatBold = () => {
     toast({
@@ -721,7 +713,6 @@ export default function WriterPage() {
                 onToggleAiDetection={handleToggleAiDetection}
                 onToggleHumanize={handleToggleHumanize}
                 onTogglePlagiarismCheck={handleTogglePlagiarismCheck}
-                onToggleVisualContent={handleToggleVisualContent}
                 onFormatBold={handleFormatBold}
                 onFormatItalic={handleFormatItalic}
                 onFormatList={handleFormatList}
@@ -950,29 +941,10 @@ export default function WriterPage() {
                   </Card>
                       </CollapsibleContent>
                     </Collapsible>
-
-              {/* Visual Content Renderer (for Mermaid charts, etc.) */}
-              <Collapsible className="mb-6">
-                <CollapsibleTrigger className="flex items-center justify-between w-full py-3 px-4 bg-gray-100 dark:bg-gray-800 rounded-md text-lg font-semibold text-gray-900 dark:text-gray-50 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
-                  <div className="flex items-center gap-2">
-                    <Lightbulb className="h-5 w-5" /> Visual Content
-                  </div>
-                  <ChevronDown className="h-5 w-5" />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="mt-4">
-                  <Card>
-              <CardContent className="p-4">
-                      <VisualContentRenderer content={documentContent} />
-                      {/* Example of embedding MermaidChart directly if needed */}
-                      {/* <MermaidChart chartDefinition="graph TD; A-->B" /> */}
-                    </CardContent>
-                  </Card>
-                </CollapsibleContent>
-              </Collapsible>
             </div>
           </ScrollArea>
         </main>
-    </div>
+      </div>
     </TooltipProvider>
   )
 }

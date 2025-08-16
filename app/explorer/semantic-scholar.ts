@@ -1,5 +1,9 @@
-// Semantic Scholar API integration for enhanced paper metadata and citations
-// API Documentation: https://api.semanticscholar.org/
+// Semantic Scholar API integration with caching & rate-limit protection
+// -------------------------------------------------------------------
+// Docs: https://api.semanticscholar.org/
+
+import { apiCache } from '@/lib/services/cache.service'
+import { fetchWithRetry } from '@/lib/utils/retry'
 
 interface SemanticScholarPaper {
   paperId: string
@@ -51,13 +55,29 @@ interface SemanticScholarSearchResponse {
   data: SemanticScholarPaper[]
 }
 
-const SEMANTIC_SCHOLAR_BASE_URL = 'https://api.semanticscholar.org/graph/v1'
+const BASE_URL = 'https://api.semanticscholar.org/graph/v1'
+const DEFAULT_USER_AGENT = 'ai-project-planner/1.0 (research@example.com)'
+const CACHE_TTL = 30 * 24 * 60 * 60 * 1000 // 30 days
 
-/**
- * Enhanced paper search with citation data from Semantic Scholar
- */
+// ------------------------ Helper ------------------------
+async function fetchJSON<T>(url: string): Promise<T> {
+  const res = await fetchWithRetry(url, {
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': DEFAULT_USER_AGENT
+    }
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+function cacheKey(prefix: string, ...parts: (string | number | undefined)[]) {
+  return `${prefix}_${parts.map(p => encodeURIComponent(String(p))).join('_')}`
+}
+
+// ---------------------- API wrappers --------------------
 export async function searchSemanticScholar(
-  query: string, 
+  query: string,
   limit = 20,
   fields: string[] = [
     'paperId', 'title', 'abstract', 'venue', 'year', 'authors',
@@ -66,121 +86,65 @@ export async function searchSemanticScholar(
     'publicationTypes', 'publicationDate', 'journal', 'externalIds', 'url', 'tldr'
   ]
 ): Promise<SemanticScholarPaper[]> {
-  try {
-    const encodedQuery = encodeURIComponent(query)
-    const fieldsParam = fields.join(',')
-    const url = `${SEMANTIC_SCHOLAR_BASE_URL}/paper/search?query=${encodedQuery}&limit=${limit}&fields=${fieldsParam}`
+  const encodedQuery = encodeURIComponent(query)
+  const url = `${BASE_URL}/paper/search?query=${encodedQuery}&limit=${limit}&fields=${fields.join(',')}`
+  const key = cacheKey('ss_search', query.toLowerCase(), limit)
 
-    console.log('[SemanticScholar] Searching with URL:', url)
-
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'ResearchHub/1.0 (research@example.com)'
-      }
-    })
-
-    if (!response.ok) {
-      console.warn(`[SemanticScholar] Search failed: ${response.status} ${response.statusText}`)
+  return apiCache.getOrFetch(key, async () => {
+    try {
+      const data: SemanticScholarSearchResponse = await fetchJSON(url)
+      return data.data || []
+    } catch (err) {
+      console.warn('[SemanticScholar] Search failed', err)
       return []
     }
-
-    const data: SemanticScholarSearchResponse = await response.json()
-    console.log(`[SemanticScholar] Found ${data.data?.length || 0} papers`)
-    
-    return data.data || []
-  } catch (error) {
-    console.warn('[SemanticScholar] Search error:', error)
-    return []
-  }
+  }, CACHE_TTL)
 }
 
-/**
- * Get enhanced citation data for a specific paper by DOI or title
- */
-export async function getCitationData(identifier: string, type: 'doi' | 'title' = 'doi'): Promise<SemanticScholarPaper | null> {
-  try {
-    let url: string
-    const fields = 'paperId,title,citationCount,referenceCount,influentialCitationCount,isOpenAccess,openAccessPdf,fieldsOfStudy,publicationDate,journal,externalIds,tldr'
-    
-    if (type === 'doi') {
-      // Clean the DOI - remove any URL prefix
-      const cleanDoi = identifier.replace(/^https?:\/\/(dx\.)?doi\.org\//, '')
-      url = `${SEMANTIC_SCHOLAR_BASE_URL}/paper/DOI:${cleanDoi}?fields=${fields}`
-    } else {
-      // Search by title and get the first result
-      const searchResults = await searchSemanticScholar(identifier, 1)
-      if (searchResults.length === 0) return null
-      return searchResults[0]
-    }
+export async function getCitationData(identifier: string, type: 'doi' | 'title' = 'doi') {
+  const idClean = type === 'doi' ? identifier.replace(/^https?:\/\/(dx\.)?doi\.org\//, '') : identifier.trim()
+  const key = cacheKey('ss_cite', type, idClean)
 
-    console.log(`[SemanticScholar] Looking up citation data: ${url}`)
-
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'ResearchHub/1.0 (research@example.com)'
+  return apiCache.getOrFetch(key, async () => {
+    try {
+      if (type === 'title') {
+        const results = await searchSemanticScholar(idClean, 1)
+        return results[0] || null
       }
-    })
-
-    if (!response.ok) {
-      // 404 is common for papers not in Semantic Scholar - don't log as error
-      if (response.status === 404) {
-        console.debug(`[SemanticScholar] Paper not found (404): ${identifier}`)
-      } else {
-        console.warn(`[SemanticScholar] Citation lookup failed: ${response.status} for ${identifier}`)
-      }
+      const url = `${BASE_URL}/paper/DOI:${encodeURIComponent(idClean)}?fields=paperId,title,citationCount,referenceCount,influentialCitationCount,isOpenAccess,openAccessPdf,fieldsOfStudy,publicationDate,journal,externalIds,tldr`
+      return await fetchJSON<SemanticScholarPaper>(url)
+    } catch (err) {
+      console.debug('[SemanticScholar] Citation lookup error', err)
       return null
     }
-
-    const data: SemanticScholarPaper = await response.json()
-    console.log(`[SemanticScholar] Successfully retrieved citation data for: ${data.title?.substring(0, 50)}...`)
-    return data
-  } catch (error) {
-    console.debug(`[SemanticScholar] Citation lookup error for ${identifier}:`, error)
-    return null
-  }
+  }, CACHE_TTL)
 }
 
-/**
- * Get recommendations based on a paper
- */
-export async function getRecommendations(paperId: string, limit = 10): Promise<SemanticScholarPaper[]> {
-  try {
-    const fields = 'paperId,title,abstract,venue,year,authors,citationCount,isOpenAccess,fieldsOfStudy'
-    const url = `${SEMANTIC_SCHOLAR_BASE_URL}/paper/${paperId}/recommendations?limit=${limit}&fields=${fields}`
+export async function getRecommendations(paperId: string, limit = 10) {
+  const key = cacheKey('ss_rec', paperId, limit)
 
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'ResearchHub/1.0 (research@example.com)'
-      }
-    })
-
-    if (!response.ok) {
-      console.warn(`[SemanticScholar] Recommendations failed: ${response.status}`)
+  return apiCache.getOrFetch(key, async () => {
+    try {
+      const fields = 'paperId,title,abstract,venue,year,authors,citationCount,isOpenAccess,fieldsOfStudy'
+      const url = `${BASE_URL}/paper/${paperId}/recommendations?limit=${limit}&fields=${fields}`
+      const data = await fetchJSON<{ recommendedPapers: SemanticScholarPaper[] }>(url)
+      return data.recommendedPapers || []
+    } catch (err) {
+      console.warn('[SemanticScholar] Recommendation error', err)
       return []
     }
-
-    const data = await response.json()
-    return data.recommendedPapers || []
-  } catch (error) {
-    console.warn('[SemanticScholar] Recommendations error:', error)
-    return []
-  }
+  }, CACHE_TTL)
 }
 
-/**
- * Transform Semantic Scholar paper to our ResearchPaper format
- */
-export function transformSemanticScholarPaper(paper: SemanticScholarPaper): any {
+// -------------------- Transform helpers -----------------
+export function transformSemanticScholarPaper(paper: SemanticScholarPaper) {
   return {
     id: paper.paperId,
     title: paper.title,
-    authors: paper.authors?.map(author => author.name) || [],
-    abstract: paper.abstract || "No abstract available",
+    authors: paper.authors?.map(a => a.name) || [],
+    abstract: paper.abstract || 'No abstract available',
     year: paper.year || new Date().getFullYear(),
-    journal: paper.venue || paper.journal?.name || "Unknown Journal",
+    journal: paper.venue || paper.journal?.name || 'Unknown Journal',
     url: paper.url || (paper.externalIds?.DOI ? `https://doi.org/${paper.externalIds.DOI}` : ''),
     doi: paper.externalIds?.DOI || '',
     pdf_url: paper.openAccessPdf?.url || '',
@@ -202,34 +166,21 @@ export function transformSemanticScholarPaper(paper: SemanticScholarPaper): any 
 }
 
 function determineVenueType(paper: SemanticScholarPaper): 'journal' | 'conference' | 'book' | 'repository' | 'other' {
-  const venue = paper.venue?.toLowerCase() || ''
+  const venue = (paper.venue || '').toLowerCase()
   const types = paper.publicationTypes?.map(t => t.toLowerCase()) || []
-  
-  if (types.includes('conference') || venue.includes('conference') || venue.includes('proceedings')) {
-    return 'conference'
-  }
-  if (types.includes('journal') || venue.includes('journal')) {
-    return 'journal'
-  }
-  if (types.includes('book') || venue.includes('book')) {
-    return 'book'
-  }
-  if (venue.includes('arxiv') || venue.includes('preprint')) {
-    return 'repository'
-  }
-  
+  if (types.includes('conference') || venue.includes('conference') || venue.includes('proceedings')) return 'conference'
+  if (types.includes('journal') || venue.includes('journal')) return 'journal'
+  if (types.includes('book') || venue.includes('book')) return 'book'
+  if (venue.includes('arxiv') || venue.includes('preprint')) return 'repository'
   return 'other'
 }
 
-/**
- * Test Semantic Scholar API availability
- */
-export async function testSemanticScholarAPI(): Promise<boolean> {
+// Quick connectivity test
+export async function testSemanticScholarAPI() {
   try {
-    const response = await fetch(`${SEMANTIC_SCHOLAR_BASE_URL}/paper/search?query=test&limit=1`)
-    return response.ok
-  } catch (error) {
-    console.warn('[SemanticScholar] API test failed:', error)
+    const res = await fetchWithRetry(`${BASE_URL}/paper/search?query=test&limit=1`)
+    return res.ok
+  } catch {
     return false
   }
 }

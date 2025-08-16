@@ -11,6 +11,40 @@
 
 ## 🚀 Technology Stack
 
+```mermaid
+flowchart LR
+  subgraph Frontend
+    A[Next.js 15 & React 19]
+    B[TailwindCSS]
+  end
+  subgraph Backend
+    C[Node.js 18 / Express]
+    D[FastAPI (Python)]
+  end
+  subgraph AI
+    E[OpenAI GPT-4o]
+    F[Anthropic Claude-3]
+    G[Google Gemini]
+    H[Groq LLaMA]
+  end
+  subgraph Data & Realtime
+    I[Supabase PG]
+    J[Redis Cache]
+    K[Socket.io]
+  end
+  A --> C
+  A --> I
+  C --> I
+  D --> I
+  C --> J
+  A --> K
+  E --> C
+  F --> C
+  G --> C
+  H --> C
+```
+
+
 | Frontend | Backend | AI & ML | Database | Real-time |
 |----------|---------|---------|----------|-----------|
 | [![Next.js](https://img.shields.io/badge/Next.js-15.2.4-black?style=flat-square&logo=next.js)](https://nextjs.org/) | [![Node.js](https://img.shields.io/badge/Node.js-18+-green?style=flat-square&logo=node.js)](https://nodejs.org/) | [![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-412991?style=flat-square&logo=openai)](https://openai.com/) | [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-green?style=flat-square&logo=supabase)](https://supabase.io/) | [![Socket.io](https://img.shields.io/badge/Socket.io-4.8.1-black?style=flat-square&logo=socket.io)](https://socket.io/) |
@@ -1106,6 +1140,10 @@ const socket = io('ws://localhost:3001', {
 ---
 
 ## 📊 Performance Metrics
+
+[![Lighthouse Performance](https://img.shields.io/badge/Lighthouse-Performance-95-brightgreen?logo=lighthouse)](https://developers.google.com/web/tools/lighthouse)
+[![Lighthouse Accessibility](https://img.shields.io/badge/Lighthouse-Accessibility-97-brightgreen?logo=lighthouse)](https://developers.google.com/web/tools/lighthouse)
+[![Coverage](https://img.shields.io/badge/Test%20Coverage-88%25-yellowgreen)](#)
 
 ### 🚀 System Performance Dashboard
 

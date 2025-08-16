@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
+import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -10,13 +11,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty-state"
+import { buildWritingPrompt } from "@/lib/prompt-builder"
 import { useToast } from "@/hooks/use-toast"
 import { useResearchSession } from "@/components/research-session-provider"
 import { AI_PROVIDERS, type AIProvider } from "@/lib/ai-providers"
 import { Label } from "@/components/ui/label"
 import { FileProcessor, type FileProcessingResult } from "@/lib/file-processors"
+import { transformInlineCitations, extractCitationNumbers, buildReferenceBlock } from "@/lib/utils/inline-citation"
+import { getPreset } from "@/lib/config/model-presets"
+import { runGuardrails } from "@/lib/services/guardrails.service"
 import { supabase } from "@/lib/supabase"
 import MinimalAIProviderSelector from "@/components/ai-provider-selector-minimal"
+import { searchSemanticScholar, getCitationData, transformSemanticScholarPaper } from "@/app/explorer/semantic-scholar"
 import {
   Sparkles,
   ChevronUp,
@@ -56,6 +62,8 @@ export function AIWritingAssistant({
 }: AIWritingAssistantProps) {
   const [prompt, setPrompt] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
+  const preset = getPreset(selectedProvider, selectedModel)
+  const [temperature, setTemperature] = useState(preset?.defaultTemperature ?? 0.5)
   const [generatedText, setGeneratedText] = useState('')
   const [writingTask, setWritingTask] = useState<string>('continue')
   const [showSettings, setShowSettings] = useState(false)
@@ -70,7 +78,7 @@ export function AIWritingAssistant({
   } | null>(null)
 
   const { toast } = useToast()
-  const { session } = useResearchSession()
+  const { session, getSelectedPapers } = useResearchSession()
 
   // Writing task options
   const writingTasks = [
@@ -244,8 +252,117 @@ export function AIWritingAssistant({
     }
   }
 
+  // Enrich paper data with semantic scholar information
+  const enrichPaperData = async (papers: any[]) => {
+    const enrichedPapers = []
+    
+    for (const paper of papers) {
+      try {
+        // Try to get enhanced data from Semantic Scholar
+        let enhancedData = null
+        
+        // First try by DOI if available
+        if (paper.doi) {
+          enhancedData = await getCitationData(paper.doi, 'doi')
+        }
+        
+        // If no DOI or DOI lookup failed, try by title
+        if (!enhancedData && paper.title) {
+          const searchResults = await searchSemanticScholar(paper.title, 1)
+          if (searchResults.length > 0) {
+            enhancedData = searchResults[0]
+          }
+        }
+        
+        // Combine original paper data with enhanced data
+        if (enhancedData) {
+          const transformed = transformSemanticScholarPaper(enhancedData)
+          enrichedPapers.push({
+            ...paper,
+            ...transformed,
+            // Keep original data if enhanced is missing
+            title: paper.title || transformed.title,
+            authors: paper.authors?.length ? paper.authors : transformed.authors,
+            year: paper.year || transformed.year,
+            abstract: transformed.abstract || paper.abstract || 'Abstract not available',
+            journal: transformed.journal || paper.journal || paper.venue,
+            doi: paper.doi || transformed.doi,
+            citationCount: transformed.cited_by_count || 0,
+            methodology: extractMethodologyFromAbstract(transformed.abstract || paper.abstract || ''),
+            keyFindings: extractKeyFindingsFromAbstract(transformed.abstract || paper.abstract || ''),
+            enhanced: true
+          })
+        } else {
+          // Keep original paper but mark as not enhanced
+          enrichedPapers.push({
+            ...paper,
+            enhanced: false,
+            methodology: extractMethodologyFromAbstract(paper.abstract || ''),
+            keyFindings: extractKeyFindingsFromAbstract(paper.abstract || '')
+          })
+        }
+      } catch (error) {
+        console.warn(`Failed to enrich paper: ${paper.title}`, error)
+        enrichedPapers.push({ ...paper, enhanced: false })
+      }
+    }
+    
+    return enrichedPapers
+  }
+  
+  // Extract methodology hints from abstract
+  const extractMethodologyFromAbstract = (abstract: string): string => {
+    if (!abstract) return 'Not specified'
+    
+    const methodKeywords = [
+      'machine learning', 'deep learning', 'neural network', 'cnn', 'rnn', 'lstm',
+      'regression', 'classification', 'clustering', 'survey', 'review', 'analysis',
+      'experimental', 'empirical', 'simulation', 'case study', 'dataset', 'algorithm'
+    ]
+    
+    const foundMethods = methodKeywords.filter(keyword => 
+      abstract.toLowerCase().includes(keyword.toLowerCase())
+    )
+    
+    return foundMethods.length > 0 ? foundMethods.slice(0, 3).join(', ') : 'Literature analysis'
+  }
+  
+  // Extract key findings from abstract
+  const extractKeyFindingsFromAbstract = (abstract: string): string => {
+    if (!abstract) return 'Not specified'
+    
+    // Look for result indicators
+    const resultPatterns = [
+      /results?\s+(?:show|indicate|demonstrate|reveal)[^.]*\./gi,
+      /found\s+that[^.]*\./gi,
+      /achieved[^.]*\./gi,
+      /improved?[^.]*\./gi,
+      /accuracy[^.]*\./gi,
+      /performance[^.]*\./gi
+    ]
+    
+    for (const pattern of resultPatterns) {
+      const matches = abstract.match(pattern)
+      if (matches && matches[0]) {
+        return matches[0].trim().slice(0, 100) + (matches[0].length > 100 ? '...' : '')
+      }
+    }
+    
+    // Fallback: return first sentence that might contain findings
+    const sentences = abstract.split(/[.!?]+/)
+    for (const sentence of sentences) {
+      if (sentence.toLowerCase().includes('show') || 
+          sentence.toLowerCase().includes('found') ||
+          sentence.toLowerCase().includes('result')) {
+        return sentence.trim().slice(0, 100) + (sentence.length > 100 ? '...' : '')
+      }
+    }
+    
+    return 'Key contributions in ' + abstract.slice(0, 50) + '...'
+  }
+
   // Get research context for AI prompt
-  const getResearchContext = () => {
+  const getResearchContext = async () => {
     let context = 'Research Context:\n'
 
     // Add session data if available
@@ -254,9 +371,57 @@ export function AIWritingAssistant({
     }
 
     if (session?.selectedPapers?.length > 0) {
-      context += `Selected Papers: ${session.selectedPapers.length} papers\n`
-      session.selectedPapers.slice(0, 3).forEach((paper: any, index: number) => {
-        context += `  ${index + 1}. ${paper.title || 'Untitled'}\n`
+      // Enrich papers with semantic scholar data for literature review
+      let papersToUse = session.selectedPapers
+      
+      if (writingTask === 'literature_review') {
+        toast({
+          title: "Enriching paper data",
+          description: "Fetching detailed information from academic databases..."
+        })
+        
+        try {
+          papersToUse = await enrichPaperData(session.selectedPapers.slice(0, 8))
+        } catch (error) {
+          console.warn('Failed to enrich papers:', error)
+          toast({
+            title: "Using basic paper data", 
+            description: "Could not fetch enhanced data, using available information."
+          })
+        }
+      }
+      
+      context += `\n=== SELECTED PAPERS FOR LITERATURE REVIEW ===\n`
+      context += `Total Papers: ${papersToUse.length}\n\n`
+      
+      papersToUse.forEach((paper: any, index: number) => {
+        const authors = paper.authors?.slice(0, 3).join(', ') || 'Authors not specified'
+        const year = paper.year || paper.publication_year || paper.date?.slice(0, 4) || 'Year not specified'
+        const journal = paper.journal || paper.venue || paper.source || ''
+        const doi = paper.doi || ''
+        const methodology = paper.methodology || 'Not specified'
+        const keyFindings = paper.keyFindings || 'Not specified'
+        const citationCount = paper.citationCount || paper.cited_by_count || 0
+        
+        context += `PAPER ${index + 1}${paper.enhanced ? ' (Enhanced)' : ''}:\n`
+        context += `Title: ${paper.title || 'Title not specified'}\n`
+        context += `Authors: ${authors}\n`
+        context += `Year: ${year}\n`
+        if (journal) context += `Journal/Venue: ${journal}\n`
+        if (doi) context += `DOI: ${doi}\n`
+        context += `Citation Count: ${citationCount}\n`
+        context += `Methodology: ${methodology}\n`
+        context += `Key Findings: ${keyFindings}\n`
+        if (paper.abstract) {
+          context += `Abstract: ${paper.abstract}\n`
+        }
+        if (paper.keywords) {
+          context += `Keywords: ${Array.isArray(paper.keywords) ? paper.keywords.join(', ') : paper.keywords}\n`
+        }
+        if (paper.tldr) {
+          context += `TL;DR: ${paper.tldr}\n`
+        }
+        context += `\n---\n\n`
       })
     }
 
@@ -280,10 +445,10 @@ export function AIWritingAssistant({
         .join(' | ')
       const top = retrieveTopK(queryHints, 8)
       const joined = top
-        .map((t, i) => `(${i + 1}) ${t.substring(0, 800)}`)
-        .join("\n\n")
+        .map((t, i) => `RETRIEVED SOURCE ${i + 1}:\n${t.substring(0, 800)}`)
+        .join("\n\n---\n\n")
       if (joined) {
-        context += `\nRetrieved Context (from uploaded sources):\n${joined}\n`
+        context += `\n=== RETRIEVED CONTEXT FROM UPLOADED SOURCES ===\n${joined}\n\n`
       }
     }
 
@@ -317,69 +482,35 @@ export function AIWritingAssistant({
       }
 
       const templateStyle = getTemplateStyle()
-      const researchContext = getResearchContext()
+      const researchContext = await getResearchContext()
 
-      let systemPrompt = `You are a professional academic writer assisting with a research document in ${templateStyle}. `
-      systemPrompt += `Write in a clear, academic style appropriate for publication. `
-      systemPrompt += `Focus on producing coherent, well-structured text that would be suitable for a scholarly publication. `
-      systemPrompt += `Always maintain academic integrity and provide well-reasoned arguments.`
-      if (ragEnabled && uploadedSources.length > 0) {
-        systemPrompt += ` Use ONLY the provided Retrieved Context and Session Context for factual statements. If the context is insufficient, explicitly state "insufficient context" rather than inventing facts. Quote or paraphrase faithfully and avoid hallucinations.`
-      }
-
-      let taskPrompt = ''
-
-      switch (writingTask) {
-        case 'continue':
-          taskPrompt = `Continue writing the document from where it left off. Maintain the same style, tone, and academic rigor.`
-          break
-        case 'introduction':
-          taskPrompt = `Write a compelling introduction for this research document. Include background context, research question, and significance.`
-          break
-        case 'abstract':
-          taskPrompt = `Write a concise abstract (150-250 words) that summarizes the research problem, methodology, key findings, and conclusions.`
-          break
-        case 'literature_review':
-          taskPrompt = `Write a rigorous Literature Review that critically synthesizes the most relevant, recent (last 3–5 years preferred) and foundational studies. Structure with clear themes, identify gaps, and relate prior findings directly to the current research problem.
-
-Output requirements:
-- Start with a brief overview paragraph that defines the scope and search strategy (databases, keywords, date range if known from context; otherwise state reasonable assumptions).
-- Organize the body into thematic sub-sections with concise, comparative analysis—not summaries.
-- Where appropriate, note methodological differences, datasets, metrics, and limitations.
-- Conclude with gaps, inconsistencies, and how they motivate the present work.
-
-Include a compact Markdown table titled "Comparison of Recent Studies" with columns: Author/Year, Focus, Method/Dataset, Key Findings, Limitations/Relevance. Populate 4–8 rows using only information derivable from the provided context; if uncertain, write "unknown" rather than inventing facts.
-
-Style: objective academic tone, avoid generic filler, do not fabricate citations or DOIs.`
-          break
-        case 'analyze':
-          taskPrompt = `Analyze the current document content for structure, clarity, academic tone, and coherence. Provide specific suggestions for improvement.`
-          break
-        default:
-          taskPrompt = `Continue writing the document in a professional academic style.`
-      }
-
-      const fullPrompt = `${systemPrompt}\n\n${researchContext}\n\nTask: ${taskPrompt}`
+      const fullPrompt = buildWritingPrompt({
+        templateStyle,
+        researchContext,
+        writingTask,
+        ragEnabled,
+        uploadedSourceCount: uploadedSources.length,
+        systemPromptAddon: preset?.systemPromptAddon,
+      })
 
       // Call the AI generation API with authentication
       const response = await fetch('/api/ai/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           prompt: fullPrompt,
           provider: selectedProvider,
           model: selectedModel,
           maxTokens: 1200,
-          temperature: 0.5,
-          // pass a hint to the backend for potential server-side retrieval extensions later
+          temperature,
           metadata: {
             ragEnabled,
-            uploadedSourceCount: uploadedSources.length
-          }
-        })
+            uploadedSourceCount: uploadedSources.length,
+          },
+        }),
       })
 
       if (!response.ok) {
@@ -387,17 +518,50 @@ Style: objective academic tone, avoid generic filler, do not fabricate citations
         throw new Error(errorData.error || 'Failed to generate content')
       }
 
-      const data = await response.json()
+      if (!response.body) throw new Error('No response stream')
 
+      // For now, handle as regular JSON response (streaming can be implemented later with SSE)
+      const data = await response.json()
+      
       if (!data.success || !data.response) {
         throw new Error(data.error || 'No content generated')
       }
+      
+      // Extract the actual content from the JSON response
+      // Transform numeric citation markers into superscript links
+            const generatedContentRaw = data.response || data.content
+      const citationNumbers = extractCitationNumbers(generatedContentRaw)
+      // Build reference block using selected papers from Research Session (if any)
+      const refPapers = getSelectedPapers()
+      const referenceBlock = buildReferenceBlock(citationNumbers, refPapers)
+      const contentWithRefs = generatedContentRaw + referenceBlock
+      const generatedContent = transformInlineCitations(contentWithRefs)
+      // Run guardrails validation
+      const guard = await runGuardrails(generatedContent)
+      if (!guard.ok) {
+        toast({
+          title: "Quality issues detected",
+          description: guard.issues.join("; "),
+          variant: "destructive"
+        })
+      }
 
-      setGeneratedText(data.response)
+      setGeneratedText(generatedContent)
+
+      // Extract citations (DOIs) from the generated text
+      const doiRegex = /(10\.\d{4,9}\/[-._;()\/:A-Z0-9]+)/gi
+      const dois = [...new Set((generatedContent.match(doiRegex) || []))]
+      if (dois.length > 0) {
+        toast({ 
+          title: "Citations detected", 
+          description: `${dois.length} DOI(s) extracted and sent to Citation Manager.` 
+        })
+        // TODO: integrate with citation manager context/state
+      }
 
       toast({
         title: "Content generated",
-        description: `AI writing assistant has generated ${writingTask} content using ${data.provider || selectedProvider}.`,
+        description: `AI writing assistant generated ${writingTask} content using ${selectedProvider}.`,
       })
     } catch (error) {
       console.error("Error generating text:", error)
@@ -495,19 +659,33 @@ Style: objective academic tone, avoid generic filler, do not fabricate citations
 
       {/* AI Provider Settings */}
       {showSettings && (
-        <Card>
-          <CardContent className="pt-4">
-            <MinimalAIProviderSelector
-              selectedProvider={selectedProvider as AIProvider}
-              selectedModel={selectedModel}
-              onProviderChange={onProviderChange || (() => { })}
-              onModelChange={onModelChange || (() => { })}
-              variant="compact"
-              showModelSelector={true}
-              showConfigLink={false}
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="pt-4">
+              <MinimalAIProviderSelector
+                selectedProvider={selectedProvider as AIProvider}
+                selectedModel={selectedModel}
+                onProviderChange={onProviderChange || (() => { })}
+                onModelChange={onModelChange || (() => { })}
+                variant="compact"
+                showModelSelector={true}
+                showConfigLink={false}
+              />
+            </CardContent>
+          </Card>
+          <div className="flex items-center gap-4">
+            <Label className="text-xs w-24">Creativity</Label>
+            <Slider
+              min={0}
+              max={1}
+              step={0.1}
+              value={[temperature]}
+              onValueChange={(v)=>setTemperature(v[0])}
+              className="w-full"
             />
-          </CardContent>
-        </Card>
+            <span className="text-xs w-10 text-right">{temperature.toFixed(1)}</span>
+          </div>
+        </div>
       )}
 
       {writingTask === 'custom' && (
