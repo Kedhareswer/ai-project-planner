@@ -30,9 +30,11 @@ export default function SummarizerSEOHead({
   const title = dynamicTitle;
   const description = dynamicDescription;
 
-  const ogImage = `${baseUrl}/og-image-1200x630.png`;
-const ogImageSmall = `${baseUrl}/og-image-600x315.png`; // Fallback for Twitter Lite or small clients
-const imageAlt = "Thesis Flow AI Summarizer - Transform documents into intelligent summaries";
+  // Use existing placeholders until branded OG images are uploaded
+  const ogImagePrimary = `${baseUrl}/placeholder-logo.png`;
+  const ogImageSecondary = `${baseUrl}/placeholder.jpg`;
+  const imageAltPrimary = "Thesis Flow AI — Research platform overview";
+  const imageAltSecondary = "Thesis Flow AI — Document summarizer module";
 
   // Structured Data Objects
   const softwareApplicationSchema = {
@@ -95,7 +97,7 @@ const imageAlt = "Thesis Flow AI Summarizer - Transform documents into intellige
       "https://discord.gg/bolt-research-hub"
     ],
     url,
-    screenshot: ogImage,
+    screenshot: ogImagePrimary,
   };
 
   const webApplicationSchema = {
@@ -175,13 +177,10 @@ const imageAlt = "Thesis Flow AI Summarizer - Transform documents into intellige
       <meta property="og:title" content={title} />
       <meta property="og:description" content={description} />
       <meta property="og:url" content={url} />
-      <meta property="og:image" content={ogImage} />
-      <meta property="og:image:width" content="1200" />
-      <meta property="og:image:height" content="630" />
-      <meta property="og:image" content={ogImageSmall} />
-      <meta property="og:image:width" content="600" />
-      <meta property="og:image:height" content="315" />
-      <meta property="og:image:alt" content={imageAlt} />
+      <meta property="og:image" content={ogImagePrimary} />
+      <meta property="og:image:alt" content={imageAltPrimary} />
+      <meta property="og:image" content={ogImageSecondary} />
+      <meta property="og:image:alt" content={imageAltSecondary} />
 
       {/* Twitter Card */}
       <meta name="twitter:card" content="summary_large_image" />
@@ -189,8 +188,8 @@ const imageAlt = "Thesis Flow AI Summarizer - Transform documents into intellige
       <meta name="twitter:creator" content="@BoltResearchHub" />
       <meta name="twitter:title" content={title} />
       <meta name="twitter:description" content={description} />
-      <meta name="twitter:image" content={ogImage} />
-      <meta name="twitter:image:alt" content={imageAlt} />
+      <meta name="twitter:image" content={ogImagePrimary} />
+      <meta name="twitter:image:alt" content={imageAltPrimary} />
 
       {/* International/Language Support */}
       <link rel="alternate" hrefLang="en" href={url} />

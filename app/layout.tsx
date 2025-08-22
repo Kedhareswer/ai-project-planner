@@ -14,6 +14,9 @@ import { CookiePanel } from "@/components/ui/cookie-banner-1"
 
 const inter = Inter({ subsets: ["latin"] })
 
+// Base site URL for absolute metadata links
+const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://thesisflow-ai.vercel.app"
+
 export const metadata: Metadata = {
   title: "AI Research Platform — Discover, Summarize & Collaborate Smarter | Thesis Flow AI",
   description: "Thesis Flow AI is an AI research hub where you can explore papers, generate instant summaries, organize projects, and collaborate with teams — all in one place.",
@@ -26,7 +29,42 @@ export const metadata: Metadata = {
     "research assistant",
     "research productivity software"
   ],
-  generator: 'v0.dev'
+  generator: 'v0.dev',
+  metadataBase: new URL(baseUrl),
+  alternates: {
+    canonical: baseUrl
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Thesis Flow AI",
+    title: "AI Research Platform — Discover, Summarize & Collaborate Smarter | Thesis Flow AI",
+    description: "Thesis Flow AI is an AI research hub where you can explore papers, generate instant summaries, organize projects, and collaborate with teams — all in one place.",
+    url: baseUrl,
+    locale: "en_US",
+    images: [
+      {
+        url: "/placeholder-logo.png",
+        alt: "Thesis Flow AI — Research platform overview"
+      },
+      {
+        url: "/placeholder.jpg",
+        alt: "Thesis Flow AI — Application preview"
+      }
+    ]
+  },
+  twitter: {
+    card: "summary_large_image",
+    site: "@BoltResearchHub",
+    creator: "@BoltResearchHub",
+    title: "AI Research Platform — Discover, Summarize & Collaborate Smarter | Thesis Flow AI",
+    description: "Thesis Flow AI is an AI research hub where you can explore papers, generate instant summaries, organize projects, and collaborate with teams — all in one place.",
+    images: [
+      {
+        url: "/placeholder-logo.png",
+        alt: "Thesis Flow AI — Research platform overview"
+      }
+    ]
+  }
 }
 
 export default function RootLayout({
