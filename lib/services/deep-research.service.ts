@@ -232,12 +232,15 @@ Start by identifying the key research areas and delegating them to agents. Be sp
     let iterations = 0
 
     while (iterations < this.config.max_iterations) {
+      console.log(`Supervisor iteration ${iterations + 1}/${this.config.max_iterations}`)
+      
       // Get supervisor decision
       const supervisorResponse = await this.callAIWithTools(supervisorMessages)
       supervisorMessages.push(supervisorResponse)
 
       // Process tool calls
       if (supervisorResponse.tool_calls && supervisorResponse.tool_calls.length > 0) {
+        console.log(`Supervisor generated ${supervisorResponse.tool_calls.length} tool calls`)
         const toolResults = await this.executeToolCalls(supervisorResponse.tool_calls)
         
         for (const result of toolResults) {
@@ -249,18 +252,74 @@ Start by identifying the key research areas and delegating them to agents. Be sp
           }
           
           if (result.name === 'research_complete') {
+            console.log('Research marked complete by supervisor')
             return { notes: allNotes, raw_notes: allRawNotes }
           }
         }
       } else {
-        // No tool calls, research complete
+        console.warn('Supervisor generated no tool calls, forcing research')
+        
+        // Force research if supervisor isn't delegating properly
+        if (iterations === 0 && allNotes.length === 0) {
+          console.log('Forcing direct research since supervisor failed to delegate')
+          const forcedResearchTopics = this.generateForcedResearchTopics(state)
+          
+          for (const topic of forcedResearchTopics) {
+            console.log(`Forcing research on: ${topic}`)
+            const research = await this.executeResearchAgent(topic)
+            allNotes.push(research)
+            allRawNotes.push(`Forced research on: ${topic}`)
+          }
+          
+          // If we got results from forced research, break
+          if (allNotes.length > 0) {
+            break
+          }
+        }
+        
+        // No tool calls and no forced research worked, break
         break
       }
 
       iterations++
     }
 
+    console.log(`Multi-agent research completed with ${allNotes.length} notes`)
     return { notes: allNotes, raw_notes: allRawNotes }
+  }
+
+  /**
+   * Generate forced research topics when supervisor fails
+   */
+  private generateForcedResearchTopics(state: ResearchState): string[] {
+    const originalQuery = state.messages[0].content
+    console.log('Generating forced research topics for:', originalQuery)
+    
+    // Extract key terms from the original query
+    const words = originalQuery.toLowerCase().split(/\s+/)
+      .filter(word => word.length > 3)
+      .filter(word => !['the', 'and', 'with', 'for', 'are', 'this', 'that'].includes(word))
+    
+    const topics = []
+    
+    // Main topic research
+    if (words.length > 0) {
+      topics.push(`Current developments in ${words.slice(0, 3).join(' ')}`)
+    }
+    
+    // Technical aspects
+    if (originalQuery.toLowerCase().includes('ai') || originalQuery.toLowerCase().includes('artificial intelligence')) {
+      topics.push('AI implementation techniques and best practices')
+    }
+    
+    if (originalQuery.toLowerCase().includes('deep learning') || originalQuery.toLowerCase().includes('machine learning')) {
+      topics.push('Latest deep learning research and applications')
+    }
+    
+    // Applications and trends
+    topics.push(`Practical applications and future trends in ${words.slice(0, 2).join(' ')}`)
+    
+    return topics.slice(0, 3) // Limit to 3 topics
   }
 
   /**
@@ -330,10 +389,25 @@ Conduct thorough research and provide a detailed summary of your findings.`
           console.log(`Research agent completed for ${topic} after ${agentIterations + 1} iterations`)
           return response.content
         } else {
-          // Encourage more research
+          // Force at least one search if agent isn't searching
+          console.log('Agent not conducting searches, forcing web search')
+          const forcedSearchResult = await this.searchService.search(topic, {
+            maxResults: 5,
+            sources: ['duckduckgo'], // Use DuckDuckGo as fallback since it needs no API key
+            combineStrategy: 'weighted'
+          })
+          
+          const searchSummary = this.formatSearchResults(forcedSearchResult)
+          agentMessages.push({
+            role: 'tool',
+            content: searchSummary,
+            tool_call_id: 'forced_search',
+            name: 'web_search'
+          })
+          
           agentMessages.push({
             role: 'user',
-            content: 'Please conduct more thorough research using the available search tools before providing your final summary.'
+            content: 'Based on the search results above, provide a comprehensive summary with analysis and insights.'
           })
         }
       }
@@ -495,41 +569,94 @@ ${toolsDescription}`
    * Parse tool calls from AI response
    */
   private parseToolCalls(content: string): ToolCall[] {
+    console.log('Parsing AI response for tool calls:', content.substring(0, 500) + '...')
     const toolCalls: ToolCall[] = []
-    const toolCallRegex = /USE_TOOL:\s*(\w+)\((.*?)\)/g
-    let match
-
-    while ((match = toolCallRegex.exec(content)) !== null) {
-      const [, toolName, argsString] = match
-      
-      try {
-        // Parse arguments - handle both string and object formats
-        let args: any = {}
-        if (argsString.trim()) {
-          if (argsString.startsWith('"') && argsString.endsWith('"')) {
-            // Simple string argument
-            const paramName = toolName.includes('search') ? 'query' : 'thoughts'
-            args = { [paramName]: argsString.slice(1, -1) }
-          } else {
-            // Try to parse as JSON-like arguments
-            args = this.parseToolArguments(argsString)
+    
+    // Multiple regex patterns to catch different formats
+    const patterns = [
+      /USE_TOOL:\s*(\w+)\((.*?)\)/g,
+      /(\w+_search|conduct_research|research_complete|think)\s*\((.*?)\)/g,
+      /\b(web_search|scholar_search|news_search|doc_search|conduct_research|research_complete|think)\s*:\s*([^\n]+)/g
+    ]
+    
+    for (const regex of patterns) {
+      let match
+      while ((match = regex.exec(content)) !== null) {
+        const [, toolName, argsString] = match
+        
+        try {
+          // Parse arguments - handle both string and object formats
+          let args: any = {}
+          if (argsString && argsString.trim()) {
+            if (argsString.startsWith('"') && argsString.endsWith('"')) {
+              // Simple string argument
+              const paramName = toolName.includes('search') ? 'query' : 
+                               toolName === 'conduct_research' ? 'research_topic' :
+                               toolName === 'research_complete' ? 'summary' : 'thoughts'
+              args = { [paramName]: argsString.slice(1, -1) }
+            } else {
+              // Try to parse as JSON-like arguments
+              args = this.parseToolArguments(argsString)
+            }
           }
-        }
 
+          console.log(`Parsed tool: ${toolName} with args:`, args)
+          
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'function',
+            function: {
+              name: toolName,
+              arguments: JSON.stringify(args)
+            }
+          })
+        } catch (error) {
+          console.error('Error parsing tool call:', error)
+        }
+      }
+    }
+    
+    console.log(`Found ${toolCalls.length} tool calls`)
+    
+    // If no tool calls found but this looks like a research response, force some research
+    if (toolCalls.length === 0 && (content.toLowerCase().includes('research') || content.toLowerCase().includes('search'))) {
+      console.log('No tool calls found, forcing basic research')
+      // Force at least one search based on the content
+      const query = this.extractQueryFromContent(content)
+      if (query) {
         toolCalls.push({
-          id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          id: `call_forced_${Date.now()}`,
           type: 'function',
           function: {
-            name: toolName,
-            arguments: JSON.stringify(args)
+            name: 'web_search',
+            arguments: JSON.stringify({ query, max_results: 5 })
           }
         })
-      } catch (error) {
-        console.error('Error parsing tool call:', error)
       }
     }
 
     return toolCalls
+  }
+
+  /**
+   * Extract search query from content when no tool calls found
+   */
+  private extractQueryFromContent(content: string): string | null {
+    // Try to extract meaningful search terms from the AI response
+    const lines = content.split('\n')
+    for (const line of lines) {
+      if (line.toLowerCase().includes('research') || line.toLowerCase().includes('search')) {
+        // Extract key terms
+        const words = line.split(' ').filter(word => 
+          word.length > 3 && 
+          !['research', 'search', 'find', 'look', 'into', 'about', 'this', 'that', 'will', 'should'].includes(word.toLowerCase())
+        )
+        if (words.length > 0) {
+          return words.slice(0, 3).join(' ')
+        }
+      }
+    }
+    return null
   }
 
   /**
