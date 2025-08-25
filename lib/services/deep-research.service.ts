@@ -4,7 +4,7 @@
  */
 
 import { AIProviderService } from '@/lib/ai-providers'
-import { TavilySearchService } from './tavily-search.service'
+import { UnifiedSearchService } from './unified-search.service'
 import type { 
   ResearchState, 
   ResearchMessage, 
@@ -18,12 +18,12 @@ import type {
 } from './deep-research.types'
 
 export class DeepResearchService {
-  private tavilyService: TavilySearchService
+  private searchService: UnifiedSearchService
   private config: DeepResearchConfig
 
-  constructor(config: DeepResearchConfig, tavilyApiKey: string) {
+  constructor(config: DeepResearchConfig) {
     this.config = config
-    this.tavilyService = new TavilySearchService(tavilyApiKey)
+    this.searchService = new UnifiedSearchService()
   }
 
   /**
@@ -250,7 +250,10 @@ Your task is to:
 3. Provide a comprehensive summary
 
 Available tools:
-- tavily_search: Search the web for information
+- web_search: Search the web for information
+- scholar_search: Search academic papers and research
+- news_search: Search latest news and current events
+- doc_search: Search technical documentation
 - think: Reflect on findings and plan next steps
 
 Conduct thorough research and provide a detailed summary of your findings.`
@@ -356,17 +359,39 @@ Research completed with available findings documented above.`
   }
 
   /**
+   * Format search results into readable text
+   */
+  private formatSearchResults(results: any[], type: string = 'Web'): string {
+    if (!results || results.length === 0) {
+      return `No ${type.toLowerCase()} search results found.`
+    }
+
+    const formatted = results.slice(0, 5).map((result, index) => {
+      return `${index + 1}. **${result.title}**
+   URL: ${result.url}
+   ${result.snippet}
+   ${result.relevanceScore ? `Relevance: ${(result.relevanceScore * 100).toFixed(0)}%` : ''}`
+    }).join('\n\n')
+
+    return `## ${type} Search Results\n\n${formatted}\n\nFound ${results.length} total results.`
+  }
+
+  /**
    * Call AI with tool support
    */
   private async callAIWithTools(messages: ResearchMessage[]): Promise<ResearchMessage> {
     const toolsDescription = `Available tools:
-- tavily_search(query: string, max_results?: number): Search the web for information
+- web_search(query: string, max_results?: number): Search the web for information
+- scholar_search(query: string, max_results?: number): Search academic papers and research
+- news_search(query: string, max_results?: number): Search latest news and current events
+- doc_search(query: string, library?: string, max_results?: number): Search technical documentation
 - think(thoughts: string): Reflect on current progress and plan next steps  
 - conduct_research(research_topic: string): Delegate research on a specific topic to a sub-agent
 - research_complete(summary: string): Indicate that research is complete
 
 To use a tool, respond with: USE_TOOL: tool_name(arguments)
-For example: USE_TOOL: tavily_search("machine learning trends 2024")
+For example: USE_TOOL: web_search("machine learning trends 2024")
+Or: USE_TOOL: scholar_search("deep learning papers 2024")
 
 If you don't need to use any tools, provide your response directly.`
 
@@ -414,7 +439,8 @@ ${toolsDescription}`
         if (argsString.trim()) {
           if (argsString.startsWith('"') && argsString.endsWith('"')) {
             // Simple string argument
-            args = { [toolName === 'tavily_search' ? 'query' : 'thoughts']: argsString.slice(1, -1) }
+            const paramName = toolName.includes('search') ? 'query' : 'thoughts'
+            args = { [paramName]: argsString.slice(1, -1) }
           } else {
             // Try to parse as JSON-like arguments
             args = this.parseToolArguments(argsString)
@@ -462,12 +488,36 @@ ${toolsDescription}`
         let result: string
 
         switch (toolCall.function.name) {
-          case 'tavily_search':
-            const searchResponse = await this.tavilyService.search(args.query, {
-              max_results: args.max_results || 5,
-              include_raw_content: true
+          case 'web_search':
+            const webResults = await this.searchService.search(args.query, {
+              maxResults: args.max_results || 5,
+              sources: ['google', 'duckduckgo', 'tavily', 'langsearch'],
+              combineStrategy: 'weighted'
             })
-            result = this.tavilyService.extractKeyInfo(searchResponse.results)
+            result = this.formatSearchResults(webResults)
+            break
+
+          case 'scholar_search':
+            const scholarResults = await this.searchService.searchScholar(args.query, {
+              maxResults: args.max_results || 5
+            })
+            result = this.formatSearchResults(scholarResults, 'Scholar')
+            break
+
+          case 'news_search':
+            const newsResults = await this.searchService.searchNews(args.query, {
+              maxResults: args.max_results || 5
+            })
+            result = this.formatSearchResults(newsResults, 'News')
+            break
+
+          case 'doc_search':
+            const docResults = await this.searchService.searchDocumentation(
+              args.query,
+              args.library,
+              { maxResults: args.max_results || 5 }
+            )
+            result = this.formatSearchResults(docResults, 'Documentation')
             break
 
           case 'think':

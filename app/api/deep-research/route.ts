@@ -31,13 +31,30 @@ export async function POST(req: Request) {
       );
     }
 
-    // Check for required API keys
-    if (!process.env.TAVILY_API_KEY) {
+    // Check for at least one search API key
+    const hasSearchCapability = 
+      process.env.TAVILY_API_KEY || 
+      (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CSE_ID) ||
+      true; // DuckDuckGo doesn't require API key
+
+    if (!hasSearchCapability) {
       return NextResponse.json(
-        { success: false, error: "TAVILY_API_KEY is required for web search functionality." },
+        { success: false, error: "At least one search service must be configured." },
         { status: 500 }
       );
     }
+
+    // Log available search services
+    const availableServices = [];
+    if (process.env.GOOGLE_SEARCH_API_KEY && process.env.GOOGLE_SEARCH_CSE_ID) {
+      availableServices.push('Google');
+    }
+    if (process.env.TAVILY_API_KEY) {
+      availableServices.push('Tavily');
+    }
+    availableServices.push('DuckDuckGo'); // Always available
+    
+    console.log('Available search services:', availableServices);
 
     // Create Deep Research configuration
     const config: DeepResearchConfig = {
@@ -49,8 +66,8 @@ export async function POST(req: Request) {
       timeout_ms: Number(process.env.DEEP_RESEARCH_TIMEOUT_MS || 180000)
     };
 
-    // Initialize Deep Research service
-    const deepResearchService = new DeepResearchService(config, process.env.TAVILY_API_KEY);
+    // Create service instance (no longer needs separate Tavily API key)
+    const deepResearchService = new DeepResearchService(config);
 
     // Set timeout for the entire operation
     const timeoutPromise = new Promise<never>((_, reject) => {

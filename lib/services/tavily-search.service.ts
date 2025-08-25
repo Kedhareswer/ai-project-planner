@@ -3,6 +3,8 @@
  * Provides web search capabilities using the Tavily API
  */
 
+import { BaseSearchService, SearchResult, SearchOptions } from './base-search.service';
+
 export interface TavilySearchResult {
   title: string
   url: string
@@ -32,15 +34,16 @@ export interface TavilySearchOptions {
   exclude_domains?: string[]
 }
 
-export class TavilySearchService {
+export class TavilySearchService extends BaseSearchService {
   private apiKey: string
   private baseUrl = 'https://api.tavily.com'
 
-  constructor(apiKey: string) {
-    this.apiKey = apiKey
+  constructor(apiKey?: string) {
+    super('Tavily')
+    this.apiKey = apiKey || process.env.TAVILY_API_KEY || ''
   }
 
-  async search(query: string, options: TavilySearchOptions = {}): Promise<TavilySearchResponse> {
+  async searchTavily(query: string, options: TavilySearchOptions = {}): Promise<TavilySearchResponse> {
     const {
       search_depth = 'basic',
       topic = 'general',
@@ -86,18 +89,57 @@ export class TavilySearchService {
   }
 
   async searchMultiple(queries: string[], options: TavilySearchOptions = {}): Promise<TavilySearchResponse[]> {
-    const searchPromises = queries.map(query => this.search(query, options))
-    return Promise.all(searchPromises)
+    const searches = queries.map(query => this.searchTavily(query, options))
+    return Promise.all(searches)
   }
 
   /**
    * Extract key information from search results
    */
   extractKeyInfo(results: TavilySearchResult[]): string {
-    return results.map(result => {
+    const formatted = results.map(result => {
       const content = result.content || result.raw_content || ''
       return `**${result.title}**\nURL: ${result.url}\nContent: ${content.substring(0, 500)}...\n`
-    }).join('\n---\n')
+    })
+    return formatted.join('\n\n')
+  }
+
+  /**
+   * Implement the abstract performSearch method from BaseSearchService
+   */
+  protected async performSearch(query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
+    const tavilyOptions: TavilySearchOptions = {
+      max_results: options.maxResults || 10,
+      search_depth: 'advanced',
+      include_answer: true,
+      include_raw_content: true
+    }
+
+    try {
+      const response = await this.searchTavily(query, tavilyOptions)
+      
+      return response.results.map(result => ({
+        title: result.title,
+        url: result.url,
+        snippet: result.content,
+        source: 'Tavily',
+        relevanceScore: result.score,
+        metadata: {
+          publishedDate: result.published_date,
+          rawContent: result.raw_content
+        }
+      }))
+    } catch (error) {
+      console.error('Tavily search error:', error)
+      return []
+    }
+  }
+
+  /**
+   * Override isAvailable to check for API key
+   */
+  isAvailable(): boolean {
+    return !!this.apiKey
   }
 
   /**
