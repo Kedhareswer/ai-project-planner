@@ -151,6 +151,8 @@ Respond with a JSON object containing:
 
 Make the brief detailed enough to guide multiple research agents working in parallel.`
 
+    console.log('Generating research brief for:', state.messages[0].content)
+    
     try {
       const response = await AIProviderService.generateResponse(
         prompt,
@@ -158,16 +160,33 @@ Make the brief detailed enough to guide multiple research agents working in para
         this.config.model
       )
 
-      const result = JSON.parse(response.content)
+      console.log('AI response for research brief:', response.content.substring(0, 200) + '...')
+      
+      // Try to parse JSON response
+      let result: ResearchBrief
+      try {
+        result = JSON.parse(response.content)
+      } catch (parseError) {
+        console.warn('Failed to parse JSON, extracting content manually')
+        // Extract content manually if JSON parsing fails
+        result = {
+          research_brief: response.content,
+          key_questions: this.extractQuestionsFromText(response.content),
+          research_scope: "General research covering current state, trends, and practical applications"
+        }
+      }
+      
+      console.log('Generated research brief successfully')
       return result as ResearchBrief
     } catch (error) {
+      console.error('Error generating research brief:', error)
       // Fallback research brief
       return {
-        research_brief: `Research Brief: ${state.messages[0].content}\n\nObjective: Conduct comprehensive research on the requested topic.\nScope: Gather current information, analyze trends, and provide actionable insights.`,
+        research_brief: `Research Brief: ${state.messages[0].content}\n\nObjective: Conduct comprehensive research on the requested topic.\nScope: Gather current information, analyze trends, and provide actionable insights.\nDeliverables: Structured report with findings, analysis, and recommendations.`,
         key_questions: [
-          "What is the current state of this topic?",
-          "What are the key trends and developments?",
-          "What are the practical implications?"
+          `What are the current developments in ${state.messages[0].content}?`,
+          `What are the key challenges and opportunities?`,
+          `What are the practical implications and recommendations?`
         ],
         research_scope: "General research covering current state, trends, and practical applications"
       }
@@ -178,25 +197,31 @@ Make the brief detailed enough to guide multiple research agents working in para
    * Step 3: Conduct multi-agent research
    */
   private async conductMultiAgentResearch(state: ResearchState): Promise<{ notes: string[], raw_notes: string[] }> {
-    const supervisorPrompt = `You are a lead researcher coordinating a team of research agents. 
+    console.log('Starting multi-agent research coordination')
+    
+    const supervisorPrompt = `You are the Deep Research Supervisor coordinating multiple research agents. Your job is to break down the research brief into specific research tasks and delegate them to specialized agents.
 
-Research Brief: ${state.research_brief}
-Current date: ${new Date().toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+Research Brief:
+${state.research_brief}
 
-Your role is to:
-1. Break down the research into specific topics for parallel investigation
-2. Coordinate multiple research agents
-3. Decide when sufficient research has been gathered
+Key Questions to Answer:
+${state.research_brief ? JSON.stringify((state.research_brief as any).key_questions) : 'Not available'}
+
+Your role:
+1. Analyze the research brief and identify 2-4 specific research subtopics
+2. Use the conduct_research tool to delegate each subtopic to a research agent
+3. Monitor progress and ensure comprehensive coverage
+4. When all research is complete, use research_complete tool
 
 Available tools:
-- conduct_research: Delegate research on a specific topic to a sub-agent
-- think: Reflect on current progress and plan next steps
-- research_complete: Indicate research is complete
+- conduct_research(research_topic: string): Delegate research on a specific topic
+- research_complete(summary: string): Mark research as complete
+- think(thoughts: string): Reflect on progress and next steps
 
 Maximum concurrent research units: ${this.config.max_concurrent_agents}
 Maximum iterations: ${this.config.max_iterations}
 
-Start by identifying 2-3 specific research topics that need investigation, then use conduct_research to delegate them.`
+Start by identifying the key research areas and delegating them to agents. Be specific and actionable in your research topics.`
 
     const supervisorMessages: ResearchMessage[] = [
       { role: 'system', content: supervisorPrompt }
@@ -242,19 +267,23 @@ Start by identifying 2-3 specific research topics that need investigation, then 
    * Execute individual research agent
    */
   private async executeResearchAgent(topic: string): Promise<string> {
+    console.log(`Starting research agent for topic: ${topic}`)
+    
     const agentPrompt = `You are a specialized research agent focused on: ${topic}
 
 Your task is to:
-1. Search for current, relevant information on this topic
+1. Search for current, relevant information on this topic using multiple search methods
 2. Analyze and synthesize the findings
-3. Provide a comprehensive summary
+3. Provide a comprehensive summary with actionable insights
 
 Available tools:
-- web_search: Search the web for information
-- scholar_search: Search academic papers and research
-- news_search: Search latest news and current events
-- doc_search: Search technical documentation
-- think: Reflect on findings and plan next steps
+- web_search(query: string, max_results?: number): Search the web for information
+- scholar_search(query: string, max_results?: number): Search academic papers and research
+- news_search(query: string, max_results?: number): Search latest news and current events
+- doc_search(query: string, library?: string, max_results?: number): Search technical documentation
+- think(thoughts: string): Reflect on findings and plan next steps
+
+IMPORTANT: You MUST use multiple search tools to gather comprehensive information. Start with web_search, then use scholar_search for academic insights, and news_search for recent developments. Provide detailed analysis and actionable insights.
 
 Conduct thorough research and provide a detailed summary of your findings.`
 
@@ -264,18 +293,49 @@ Conduct thorough research and provide a detailed summary of your findings.`
     ]
 
     let agentIterations = 0
-    const maxAgentIterations = 3
+    const maxAgentIterations = 5 // Increased iterations for more thorough research
+    let hasSearchedWeb = false
+    let hasSearchedScholar = false
+    let hasSearchedNews = false
 
     while (agentIterations < maxAgentIterations) {
+      console.log(`Research agent iteration ${agentIterations + 1}/${maxAgentIterations} for: ${topic}`)
+      
       const response = await this.callAIWithTools(agentMessages)
       agentMessages.push(response)
 
       if (response.tool_calls && response.tool_calls.length > 0) {
+        console.log(`Agent making ${response.tool_calls.length} tool calls`)
+        
+        // Track which search types have been used
+        for (const toolCall of response.tool_calls) {
+          if (toolCall.function.name === 'web_search') hasSearchedWeb = true
+          if (toolCall.function.name === 'scholar_search') hasSearchedScholar = true
+          if (toolCall.function.name === 'news_search') hasSearchedNews = true
+        }
+        
         const toolResults = await this.executeToolCalls(response.tool_calls)
         agentMessages.push(...toolResults)
+        
+        // Check if we need to encourage more comprehensive searching
+        if (agentIterations === 2 && (!hasSearchedWeb || !hasSearchedScholar)) {
+          agentMessages.push({
+            role: 'user',
+            content: 'Please ensure you use both web_search and scholar_search to get comprehensive information from different sources.'
+          })
+        }
       } else {
-        // Agent provided final summary
-        return response.content
+        // Agent provided final summary - but only accept if adequate research was done
+        if (hasSearchedWeb || hasSearchedScholar || agentIterations >= 2) {
+          console.log(`Research agent completed for ${topic} after ${agentIterations + 1} iterations`)
+          return response.content
+        } else {
+          // Encourage more research
+          agentMessages.push({
+            role: 'user',
+            content: 'Please conduct more thorough research using the available search tools before providing your final summary.'
+          })
+        }
       }
 
       agentIterations++
@@ -363,17 +423,26 @@ Research completed with available findings documented above.`
    */
   private formatSearchResults(results: any[], type: string = 'Web'): string {
     if (!results || results.length === 0) {
-      return `No ${type.toLowerCase()} search results found.`
+      console.warn(`No ${type.toLowerCase()} search results found`)
+      return `No ${type.toLowerCase()} search results found. This may indicate an issue with the search service or query.`
     }
 
-    const formatted = results.slice(0, 5).map((result, index) => {
+    console.log(`Formatting ${results.length} ${type.toLowerCase()} search results`)
+    
+    const formatted = results.slice(0, 8).map((result, index) => {
+      const snippet = result.snippet || 'No snippet available'
+      const relevanceInfo = result.relevanceScore ? 
+        `Relevance: ${(result.relevanceScore * 100).toFixed(0)}%` : 
+        'Relevance: Not scored'
+      
       return `${index + 1}. **${result.title}**
    URL: ${result.url}
-   ${result.snippet}
-   ${result.relevanceScore ? `Relevance: ${(result.relevanceScore * 100).toFixed(0)}%` : ''}`
+   Source: ${result.source || 'Unknown'}
+   ${snippet}
+   ${relevanceInfo}`
     }).join('\n\n')
 
-    return `## ${type} Search Results\n\n${formatted}\n\nFound ${results.length} total results.`
+    return `## ${type} Search Results (${results.length} found)\n\n${formatted}\n\n---\nNote: These are the top ${Math.min(results.length, 8)} results from ${results.length} total results found.`
   }
 
   /**
@@ -481,19 +550,23 @@ ${toolsDescription}`
    */
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<ResearchMessage[]> {
     const results: ResearchMessage[] = []
+    console.log(`Executing ${toolCalls.length} tool calls`)
 
     for (const toolCall of toolCalls) {
       try {
         const args = JSON.parse(toolCall.function.arguments)
         let result: string
+        console.log(`Executing tool: ${toolCall.function.name} with args:`, args)
 
         switch (toolCall.function.name) {
           case 'web_search':
+            console.log('Performing web search for:', args.query)
             const webResults = await this.searchService.search(args.query, {
               maxResults: args.max_results || 5,
               sources: ['google', 'duckduckgo', 'tavily', 'langsearch'],
               combineStrategy: 'weighted'
             })
+            console.log(`Found ${webResults.length} web search results`)
             result = this.formatSearchResults(webResults)
             break
 
@@ -525,17 +598,22 @@ ${toolsDescription}`
             break
 
           case 'conduct_research':
+            console.log('Delegating research on:', args.research_topic)
             result = await this.executeResearchAgent(args.research_topic)
+            console.log('Research agent completed for:', args.research_topic)
             break
 
           case 'research_complete':
+            console.log('Research marked as complete')
             result = `Research completed: ${args.summary}`
             break
 
           default:
+            console.warn('Unknown tool:', toolCall.function.name)
             result = `Unknown tool: ${toolCall.function.name}`
         }
 
+        console.log(`Tool execution result length: ${result.length} characters`)
         results.push({
           role: 'tool',
           content: result,
@@ -544,6 +622,7 @@ ${toolsDescription}`
         })
 
       } catch (error) {
+        console.error(`Error executing ${toolCall.function.name}:`, error)
         results.push({
           role: 'tool',
           content: `Error executing ${toolCall.function.name}: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -553,6 +632,32 @@ ${toolsDescription}`
       }
     }
 
+    console.log(`Completed ${results.length} tool executions`)
     return results
+  }
+
+  /**
+   * Extract questions from text when JSON parsing fails
+   */
+  private extractQuestionsFromText(text: string): string[] {
+    const questions: string[] = []
+    const lines = text.split('\n')
+    
+    for (const line of lines) {
+      if (line.includes('?') && (line.includes('What') || line.includes('How') || line.includes('Why') || line.includes('When') || line.includes('Where'))) {
+        questions.push(line.trim())
+      }
+    }
+    
+    // If no questions found, generate default ones
+    if (questions.length === 0) {
+      return [
+        'What are the key aspects of this topic?',
+        'What are the current trends and developments?',
+        'What are the practical implications?'
+      ]
+    }
+    
+    return questions.slice(0, 5) // Limit to 5 questions
   }
 }
