@@ -1,13 +1,16 @@
 "use client"
 
-import { useState } from "react"
-import { Brain, Play, Loader2, AlertCircle, FileText, ListTree, CheckCircle2 } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Brain, Play, Loader2, AlertCircle, FileText, ListTree, CheckCircle2, Settings } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import { AIProviderDetector } from "@/lib/ai-provider-detector"
+import { AI_PROVIDERS, type AIProvider } from "@/lib/ai-providers"
 
 interface DeepResearchResult {
   success: boolean
@@ -25,9 +28,42 @@ export function DeepResearch() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<DeepResearchResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [availableProviders, setAvailableProviders] = useState<AIProvider[]>([])
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider | "">("")
+  const [selectedModel, setSelectedModel] = useState<string>("")
+  const [showSettings, setShowSettings] = useState(false)
+
+  // Load available providers on component mount
+  useEffect(() => {
+    const loadProviders = async () => {
+      try {
+        const providers = await AIProviderDetector.getClientAvailableProviders()
+        setAvailableProviders(providers)
+        if (providers.length > 0) {
+          setSelectedProvider(providers[0])
+          setSelectedModel(AI_PROVIDERS[providers[0] as AIProvider].models[0])
+        }
+      } catch (error) {
+        console.error('Failed to load AI providers:', error)
+      }
+    }
+    loadProviders()
+  }, [])
+
+  // Update model when provider changes
+  useEffect(() => {
+    if (selectedProvider && AI_PROVIDERS[selectedProvider as AIProvider]) {
+      setSelectedModel(AI_PROVIDERS[selectedProvider as AIProvider].models[0])
+    }
+  }, [selectedProvider])
 
   const runDeepResearch = async () => {
     if (!query.trim()) return
+    if (!selectedProvider || !selectedModel) {
+      toast({ title: "Configuration required", description: "Please select an AI provider and model", variant: "destructive" })
+      return
+    }
+    
     setLoading(true)
     setError(null)
     setResult(null)
@@ -35,7 +71,11 @@ export function DeepResearch() {
       const res = await fetch("/api/deep-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim() })
+        body: JSON.stringify({ 
+          query: query.trim(),
+          provider: selectedProvider,
+          model: selectedModel
+        })
       })
 
       const data: DeepResearchResult = await res.json()
@@ -66,12 +106,58 @@ export function DeepResearch() {
             </div>
             <CardTitle>Deep Research</CardTitle>
           </div>
-          <Badge variant="secondary">Experimental</Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowSettings(!showSettings)}
+              className="h-8"
+            >
+              <Settings className="w-4 h-4" />
+            </Button>
+            <Badge variant="secondary">Experimental</Badge>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
             Enter a complex research question. The system will clarify intent, create a research brief, run a supervised multi-agent research loop, and produce a final report.
           </p>
+          
+          {showSettings && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">AI Provider</label>
+                <Select value={selectedProvider} onValueChange={(value: AIProvider) => setSelectedProvider(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableProviders.map((provider) => (
+                      <SelectItem key={provider} value={provider}>
+                        {AI_PROVIDERS[provider as AIProvider].name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Model</label>
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select model" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedProvider && AI_PROVIDERS[selectedProvider as AIProvider].models.map((model: string) => (
+                      <SelectItem key={model} value={model}>
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
           <div className="flex items-start gap-3">
             <Textarea
               value={query}
@@ -80,7 +166,11 @@ export function DeepResearch() {
               className="min-h-[110px] text-sm"
               disabled={loading}
             />
-            <Button onClick={runDeepResearch} disabled={!query.trim() || loading} className="shrink-0">
+            <Button 
+              onClick={runDeepResearch} 
+              disabled={!query.trim() || loading || !selectedProvider || !selectedModel} 
+              className="shrink-0"
+            >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -94,6 +184,16 @@ export function DeepResearch() {
               )}
             </Button>
           </div>
+          {availableProviders.length === 0 && (
+            <div className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-700">
+              <AlertCircle className="w-4 h-4 mt-0.5" />
+              <div>
+                <div className="font-medium">No AI providers configured</div>
+                <div>Please configure at least one AI provider (API key) to use Deep Research.</div>
+              </div>
+            </div>
+          )}
+          
           {error && (
             <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
               <AlertCircle className="w-4 h-4 mt-0.5" />
@@ -119,7 +219,7 @@ export function DeepResearch() {
                 </div>
                 <CardTitle className="text-base">Research Brief</CardTitle>
               </div>
-              <Badge>Draft</Badge>
+              <Badge>Generated with {selectedProvider}</Badge>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[220px]">
@@ -138,7 +238,7 @@ export function DeepResearch() {
                 </div>
                 <CardTitle className="text-base">Final Report</CardTitle>
               </div>
-              <Badge variant="secondary">Generated</Badge>
+              <Badge variant="secondary">Generated with {selectedModel}</Badge>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[220px]">

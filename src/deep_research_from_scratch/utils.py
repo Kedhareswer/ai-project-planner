@@ -41,8 +41,36 @@ def get_current_dir() -> Path:
 
 # ===== CONFIGURATION =====
 
-summarization_model = init_chat_model(model="groq:llama-3.3-70b-versatile", temperature=0)
+# Global variables for model configuration - will be set by init_models()
+summarization_model = None
 tavily_client = TavilyClient()
+
+def init_models(provider: str = "groq", model: str = "llama-3.3-70b-versatile"):
+    """Initialize AI models with specified provider and model.
+    
+    Args:
+        provider: AI provider (groq, openai, anthropic, etc.)
+        model: Model name for the provider
+    """
+    global summarization_model
+    
+    # Map provider to langchain format
+    provider_model_map = {
+        "groq": f"groq:{model}",
+        "openai": f"openai:{model}", 
+        "anthropic": f"anthropic:{model}",
+        "gemini": f"google:{model}",
+        "mistral": f"mistral:{model}",
+        "aiml": f"openai:{model}"  # AIML uses OpenAI-compatible API
+    }
+    
+    model_string = provider_model_map.get(provider, f"{provider}:{model}")
+    summarization_model = init_chat_model(model=model_string, temperature=0)
+    
+    return summarization_model
+
+# Initialize with default values
+init_models()
 
 # ===== SEARCH FUNCTIONS =====
 

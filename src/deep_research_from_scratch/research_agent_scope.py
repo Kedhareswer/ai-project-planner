@@ -12,7 +12,7 @@ whether sufficient context exists to proceed with research.
 from datetime import datetime
 from typing_extensions import Literal
 
-from langchain_groq import ChatGroq
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, AIMessage, get_buffer_string
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Command
@@ -29,8 +29,32 @@ def get_today_str() -> str:
 
 # ===== CONFIGURATION =====
 
-# Initialize model
-model = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.0)
+# Global model variables - will be initialized by init_scope_models()
+clarification_model = None
+research_brief_model = None
+
+def init_scope_models(provider: str = "groq", model: str = "llama-3.3-70b-versatile"):
+    """Initialize scope models with specified provider and model."""
+    global clarification_model, research_brief_model
+    
+    # Map provider to langchain format
+    provider_model_map = {
+        "groq": f"groq:{model}",
+        "openai": f"openai:{model}", 
+        "anthropic": f"anthropic:{model}",
+        "gemini": f"google:{model}",
+        "mistral": f"mistral:{model}",
+        "aiml": f"openai:{model}"  # AIML uses OpenAI-compatible API
+    }
+    
+    model_string = provider_model_map.get(provider, f"{provider}:{model}")
+    clarification_model = init_chat_model(model=model_string, temperature=0)
+    research_brief_model = init_chat_model(model=model_string, temperature=0)
+    
+    return clarification_model, research_brief_model
+
+# Initialize with default values
+init_scope_models()
 
 # ===== WORKFLOW NODES =====
 
@@ -42,7 +66,7 @@ def clarify_with_user(state: AgentState) -> Command[Literal["write_research_brie
     Routes to either research brief generation or ends with a clarification question.
     """
     # Set up structured output model
-    structured_output_model = model.with_structured_output(ClarifyWithUser)
+    structured_output_model = clarification_model.with_structured_output(ClarifyWithUser)
 
     # Invoke the model with clarification instructions
     response = structured_output_model.invoke([
@@ -72,7 +96,7 @@ def write_research_brief(state: AgentState):
     and contains all necessary details for effective research.
     """
     # Set up structured output model
-    structured_output_model = model.with_structured_output(ResearchQuestion)
+    structured_output_model = research_brief_model.with_structured_output(ResearchQuestion)
     
     # Generate research brief from conversation history
     response = structured_output_model.invoke([

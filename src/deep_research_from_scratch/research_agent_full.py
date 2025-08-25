@@ -23,8 +23,32 @@ from deep_research_from_scratch.multi_agent_supervisor import supervisor_agent
 
 # ===== Config =====
 
-from langchain_groq import ChatGroq
-writer_model = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
+from langchain.chat_models import init_chat_model
+
+# Global model variable - will be initialized by init_writer_model()
+writer_model = None
+
+def init_writer_model(provider: str = "groq", model: str = "llama-3.3-70b-versatile"):
+    """Initialize writer model with specified provider and model."""
+    global writer_model
+    
+    # Map provider to langchain format
+    provider_model_map = {
+        "groq": f"groq:{model}",
+        "openai": f"openai:{model}", 
+        "anthropic": f"anthropic:{model}",
+        "gemini": f"google:{model}",
+        "mistral": f"mistral:{model}",
+        "aiml": f"openai:{model}"  # AIML uses OpenAI-compatible API
+    }
+    
+    model_string = provider_model_map.get(provider, f"{provider}:{model}")
+    writer_model = init_chat_model(model=model_string, temperature=0)
+    
+    return writer_model
+
+# Initialize with default values
+init_writer_model()
 
 # ===== FINAL REPORT GENERATION =====
 

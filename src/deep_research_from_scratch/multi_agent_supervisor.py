@@ -15,7 +15,7 @@ import asyncio
 
 from typing_extensions import Literal
 
-from langchain_groq import ChatGroq
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
     HumanMessage, 
     BaseMessage, 
@@ -69,8 +69,33 @@ except ImportError:
 # ===== CONFIGURATION =====
 
 supervisor_tools = [ConductResearch, ResearchComplete, think_tool]
-supervisor_model = ChatGroq(model="llama-3.3-70b-versatile", temperature=0)
-supervisor_model_with_tools = supervisor_model.bind_tools(supervisor_tools)
+
+# Global model variables - will be initialized by init_supervisor_models()
+supervisor_model = None
+supervisor_model_with_tools = None
+
+def init_supervisor_models(provider: str = "groq", model: str = "llama-3.3-70b-versatile"):
+    """Initialize supervisor models with specified provider and model."""
+    global supervisor_model, supervisor_model_with_tools
+    
+    # Map provider to langchain format
+    provider_model_map = {
+        "groq": f"groq:{model}",
+        "openai": f"openai:{model}", 
+        "anthropic": f"anthropic:{model}",
+        "gemini": f"google:{model}",
+        "mistral": f"mistral:{model}",
+        "aiml": f"openai:{model}"  # AIML uses OpenAI-compatible API
+    }
+    
+    model_string = provider_model_map.get(provider, f"{provider}:{model}")
+    supervisor_model = init_chat_model(model=model_string, temperature=0)
+    supervisor_model_with_tools = supervisor_model.bind_tools(supervisor_tools)
+    
+    return supervisor_model, supervisor_model_with_tools
+
+# Initialize with default values
+init_supervisor_models()
 
 # System constants
 # Maximum number of tool call iterations for individual researcher agents

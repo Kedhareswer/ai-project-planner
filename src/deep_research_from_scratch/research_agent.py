@@ -22,11 +22,36 @@ from deep_research_from_scratch.prompts import research_agent_prompt, compress_r
 tools = [tavily_search, think_tool]
 tools_by_name = {tool.name: tool for tool in tools}
 
-# Initialize models
-model = init_chat_model(model="groq:llama-3.3-70b-versatile", temperature=0)
-model_with_tools = model.bind_tools(tools)
-summarization_model = init_chat_model(model="groq:llama-3.3-70b-versatile", temperature=0)
-compress_model = init_chat_model(model="groq:llama-3.3-70b-versatile", temperature=0)
+# Global model variables - will be initialized by init_research_models()
+model = None
+model_with_tools = None
+summarization_model = None
+compress_model = None
+
+def init_research_models(provider: str = "groq", model_name: str = "llama-3.3-70b-versatile"):
+    """Initialize research models with specified provider and model."""
+    global model, model_with_tools, summarization_model, compress_model
+    
+    # Map provider to langchain format
+    provider_model_map = {
+        "groq": f"groq:{model_name}",
+        "openai": f"openai:{model_name}", 
+        "anthropic": f"anthropic:{model_name}",
+        "gemini": f"google:{model_name}",
+        "mistral": f"mistral:{model_name}",
+        "aiml": f"openai:{model_name}"  # AIML uses OpenAI-compatible API
+    }
+    
+    model_string = provider_model_map.get(provider, f"{provider}:{model_name}")
+    model = init_chat_model(model=model_string, temperature=0)
+    model_with_tools = model.bind_tools(tools)
+    summarization_model = init_chat_model(model=model_string, temperature=0)
+    compress_model = init_chat_model(model=model_string, temperature=0)
+    
+    return model, model_with_tools, summarization_model, compress_model
+
+# Initialize with default values
+init_research_models()
 
 # ===== AGENT NODES =====
 

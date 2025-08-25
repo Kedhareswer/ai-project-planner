@@ -14,7 +14,7 @@ function getPythonCommand() {
 
 export async function POST(req: Request) {
   try {
-    const { query } = await req.json();
+    const { query, provider = "groq", model = "llama-3.3-70b-versatile" } = await req.json();
 
     if (!query || typeof query !== "string" || query.trim().length < 3) {
       return NextResponse.json(
@@ -23,17 +23,47 @@ export async function POST(req: Request) {
       );
     }
 
+    // Validate provider and model
+    if (!provider || typeof provider !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Provider must be a non-empty string." },
+        { status: 400 }
+      );
+    }
+
+    if (!model || typeof model !== "string") {
+      return NextResponse.json(
+        { success: false, error: "Model must be a non-empty string." },
+        { status: 400 }
+      );
+    }
+
     const scriptPath = path.join(process.cwd(), "python", "run_deep_research.py");
     const pythonCmd = getPythonCommand();
 
+    // Map provider to environment variable
+    const providerEnvMap: Record<string, string> = {
+      "groq": "GROQ_API_KEY",
+      "openai": "OPENAI_API_KEY",
+      "anthropic": "ANTHROPIC_API_KEY",
+      "gemini": "GEMINI_API_KEY",
+      "mistral": "MISTRAL_API_KEY",
+      "aiml": "AIML_API_KEY"
+    };
+
     const env = {
       ...process.env,
-      // Explicitly pass required keys
-      GROQ_API_KEY: process.env.GROQ_API_KEY || "",
+      // Always pass Tavily API key
       TAVILY_API_KEY: process.env.TAVILY_API_KEY || "",
     } as NodeJS.ProcessEnv;
 
-    const child = spawn(pythonCmd, [scriptPath, "--query", query], {
+    // Add provider-specific API key
+    const providerEnvKey = providerEnvMap[provider];
+    if (providerEnvKey && process.env[providerEnvKey]) {
+      env[providerEnvKey] = process.env[providerEnvKey];
+    }
+
+    const child = spawn(pythonCmd, [scriptPath, "--query", query, "--provider", provider, "--model", model], {
       cwd: process.cwd(),
       env,
       stdio: ["ignore", "pipe", "pipe"],
