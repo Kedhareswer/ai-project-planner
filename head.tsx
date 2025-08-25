@@ -91,10 +91,10 @@ export default function SummarizerSEOHead({
       "query-input": "required name=search_term_string"
     },
     sameAs: [
-      "https://github.com/Kedhareswer/ai-project-planner",
-      "https://twitter.com/BoltResearchHub",
-      "https://linkedin.com/company/bolt-research-hub",
-      "https://discord.gg/bolt-research-hub"
+      "https://github.com/Kedhareswer/thesisflow-ai",
+      "https://twitter.com/thesisflow-ai",
+      "https://linkedin.com/company/thesisflow-ai",
+      "https://discord.gg/thesisflow-ai"
     ],
     url,
     screenshot: ogImagePrimary,

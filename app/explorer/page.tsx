@@ -11,6 +11,7 @@ import { EnhancedLiteratureSearch } from "./components/EnhancedLiteratureSearch"
 import { TopicExplorer } from "./components/TopicExplorer"
 import { IdeaGenerator } from "./components/IdeaGenerator"
 import { ResearchAssistant } from "./components/ResearchAssistant"
+import { DeepResearch } from "./components/DeepResearch"
 import { RouteGuard } from "@/components/route-guard"
 import CompactAIProviderSelector from "@/components/compact-ai-provider-selector"
 import { ResearchSessionProvider } from "@/components/research-session-provider"
@@ -90,7 +91,7 @@ export default function ResearchExplorer() {
               </header>
 
               <Tabs defaultValue="search" className="space-y-6">
-                <TabsList className="grid w-full grid-cols-5 bg-gray-100 rounded-md">
+                <TabsList className="grid w-full grid-cols-6 bg-gray-100 rounded-md">
                   <TabsTrigger value="search" className="data-[state=active]:bg-gray-200">
                     <BookOpen className="h-4 w-4 mr-2" />
                     Search
@@ -110,6 +111,10 @@ export default function ResearchExplorer() {
                   <TabsTrigger value="session" className="data-[state=active]:bg-gray-200">
                     <Database className="h-4 w-4 mr-2" />
                     Session
+                  </TabsTrigger>
+                  <TabsTrigger value="deep-research" className="data-[state=active]:bg-gray-200">
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Deep Research
                   </TabsTrigger>
                 </TabsList>
                 <TabsContent value="search">
@@ -138,6 +143,16 @@ export default function ResearchExplorer() {
                 <TabsContent value="session">
                   <ResearchSessionManager />
                 </TabsContent>
+                <TabsContent value="deep-research">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-5 w-5" />
+                      <h2 className="text-xl font-semibold">Deep Research</h2>
+                    </div>
+                    <p className="text-sm text-gray-600">Run multi-agent deep research and get a structured report.</p>
+                    <DeepResearch />
+                  </div>
+                </TabsContent>
               </Tabs>
             </div>
           </div>
@@ -146,3 +161,4 @@ export default function ResearchExplorer() {
     </RouteGuard>
   )
 }
+
